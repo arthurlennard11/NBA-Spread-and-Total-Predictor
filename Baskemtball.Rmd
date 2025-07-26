@@ -1,0 +1,1686 @@
+---
+title: "Baskemtball"
+output: html_document
+date: "2025-02-06"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(tidyr)
+library(dplyr)
+library(rvest)
+
+#install.packages("slider")
+library(slider)
+```
+
+```{r}
+df1 = read_csv("/Users/arthurlennard/Downloads/Starting Data/regular_season_box_scores_2010_2024_part_1.csv")
+df2 = read_csv("/Users/arthurlennard/Downloads/Starting Data/regular_season_box_scores_2010_2024_part_2.csv")
+df3 = read_csv("/Users/arthurlennard/Downloads/Starting Data/regular_season_box_scores_2010_2024_part_3.csv")
+```
+```{r}
+df1 %>%
+  filter(personName == "LeBron James") %>%
+  group_by(matchup) %>%
+  summarize(ppg = sum(points)/n())
+
+#TS% is allegedly the best indicator of how good you are at scoring points
+#TS% * FGA/FTA for each player and add them up
+#let's get the betting odds as well
+#and player points from the last 5 games 
+#and then factor in opposing team average points given up to each position over last 5 games 
+#https://www.reddit.com/r/sportsbook/comments/u7ii57/a_list_and_explanation_of_the_best_sites_to_use/
+#https://www.fantasypros.com/nba/offense-vs-defense.php
+#https://www.fantasypros.com/daily-fantasy/nba/defense-vs-position.php?year=2020
+
+#make each row have every position's matchup, and then the ts*fga/fta, maybe pure points too
+  #ts and points gonna have to be from last 7 
+#do a table and then a model for each year, take the average of each coefficient perhaps 
+#make sure you use last 7 for the real predictions 
+
+#PLAN
+#scrape player stats from NBA
+#for a season or two to train the model, do whole year TS% and matchups
+#put each team on a row for both data sets, then combine
+#for the final thing use all last 7s, but train on the full years 
+```
+
+```{r}
+URL.PG2020 = "https://www.fantasypros.com/daily-fantasy/nba/defense-vs-position.php?year=2020"
+PG2020html = URL.PG2020 %>%
+  read_html() %>%
+  html_table(fill=T) %>%
+  .[1]
+```
+
+```{r}
+PG2020 = as.data.frame(PG2020html)
+```
+
+```{r}
+#every team first row is 2020 All
+#every team 13th row is 2020 PG
+#every team 21st row is 2020 SG
+#every team 17th row is 2020 SF
+#every team 9th row is 2020 PF
+#every team 5th row is 2020 C 
+```
+
+```{r}
+rows2020 = sort(c(seq(1, nrow(PG2020), by = 28), 
+                          seq(13, nrow(PG2020), by = 28), 
+                          seq(21, nrow(PG2020), by = 28), 
+                          seq(17, nrow(PG2020), by = 28), 
+                          seq(9, nrow(PG2020), by = 28), 
+                          seq(5, nrow(PG2020), by = 28)))
+
+
+```
+
+```{r}
+PG2020 = PG2020[rows2020,]
+#All
+#C
+#PF
+#PG
+#SF
+#SG
+
+```
+
+```{r}
+PG2020
+```
+
+```{r}
+#lagged TS% and then just match ups for the whole season 
+
+df1$TS = ((df1$points)/(2*(df1$fieldGoalsAttempted+0.44*df1$freeThrowsAttempted)))*100
+
+df12020 = df1 %>%
+  filter(season_year == "2020-21")
+
+n_distinct(df12020$matchup)
+```
+
+```{r}
+test1 = df12020 %>%
+  group_by(season_year, game_date, gameId, teamId, teamCity, teamName, matchup) %>%
+  summarize(
+    total_points = sum(points, na.rm = TRUE),
+    avg_TS = mean(TS, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+    arrange(gameId)
+```
+
+```{r}
+ggplot(test1) +
+  geom_point(mapping=aes(x=total_points, y=avg_TS))
+cor(test1$total_points, test1$avg_TS)
+```
+```{r}
+#test1$cumMeanPoints = NA
+#test1 = test1 %>%
+#  arrange(teamName, gameId) %>%
+#  group_by(teamName) %>%
+#  mutate(cumMeanPoints = cummean(lag(total_points, default = 0)))
+
+test1 = test1 %>%
+  arrange(teamName, gameId) %>%
+  group_by(teamName) %>%
+  mutate(cumMeanPoints = slide_dbl(lag(total_points, default = NA), 
+                                   mean, .before = 6, .complete = TRUE))
+
+test1 = test1 %>%
+  arrange(teamName, gameId) %>%
+  group_by(teamName) %>%
+  mutate(cumMeanTS = slide_dbl(lag(avg_TS, default = NA),
+                               mean, .before = 6, .complete = TRUE))
+
+test1
+```
+
+```{r}
+ggplot(test1) +
+  geom_point(mapping=aes(x=total_points, y=cumMeanTS))
+
+cor(test1$total_points, test1$cumMeanTS, use = "complete.obs")
+```
+
+```{r}
+#so like
+#maybe not i guess 
+#let's try anyway ! #yolo
+
+test1a = test1 %>%
+  drop_na()
+
+betamodel1 = lm(total_points ~ cumMeanTS + cumMeanPoints, data=test1a)
+summary(betamodel1)
+
+test1a$predict1 = predict(betamodel1, na.rm=T)
+
+#maybe points is actually ok, but TS does not appear to matter 
+```
+
+```{r}
+#lets get the matchups ready to combine and then fix test1
+
+#All
+#C
+#PF
+#PG
+#SF
+#SG
+
+MU2020 = PG2020 %>%
+  select(Team, PTS, X3PM, REB, FD.PTS)
+
+pos = NA
+pos = c("All", "C", "PF", "PG", "SF", "SG")
+
+MU2020$Position = rep(pos, length.out = nrow(MU2020))
+
+MU2020
+```
+
+```{r}
+Clean2020 = MU2020 %>%
+  pivot_wider(names_from = Position, values_from = c(PTS, `X3PM`, REB, FD.PTS))
+```
+
+```{r}
+Clean2020$Team = str_replace(Clean2020$Team, "^[A-Z]{4}[a-z]* ", "")
+Clean2020
+```
+
+```{r}
+df1 = df1 %>%
+  select(-TS)
+
+df1a2 = rbind(df1, df2)
+
+dfA = rbind(df1a2, df3)
+```
+
+```{r}
+dfA2020 = dfA %>%
+  filter(season_year == "2020-21")
+```
+
+```{r}
+dfA2020$TS = ((dfA2020$points)/(2*(dfA2020$fieldGoalsAttempted+0.44*dfA2020$freeThrowsAttempted)))*100
+
+test2 = dfA2020 %>%
+  group_by(season_year, game_date, gameId, teamId, teamCity, teamName, matchup) %>%
+  summarize(
+    total_points = sum(points, na.rm = TRUE),
+    avg_TS = mean(TS, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+    arrange(gameId)
+
+test2 = test2 %>%
+  arrange(teamName, gameId) %>%
+  group_by(teamName) %>%
+  mutate(cumMeanPoints = slide_dbl(lag(total_points, default = NA), 
+                                   mean, .before = 6, .complete = TRUE))
+
+test2 = test2 %>%
+  arrange(teamName, gameId) %>%
+  group_by(teamName) %>%
+  mutate(cumMeanTS = slide_dbl(lag(avg_TS, default = NA),
+                               mean, .before = 6, .complete = TRUE))
+
+
+```
+
+```{r}
+test2
+```
+```{r}
+#need to change match up into the away team's name lowk
+library(stringr)
+test2$Away = str_extract(test2$matchup, "(?<=vs\\. |@ ).*")
+test2 = test2 %>%
+  select(season_year, game_date, teamCity, teamName, Away, everything())
+```
+
+```{r}
+nba_teams = c(
+  ATL = "Hawks", BOS = "Celtics", BKN = "Nets", CHA = "Hornets", CHI = "Bulls",
+  CLE = "Cavaliers", DAL = "Mavericks", DEN = "Nuggets", DET = "Pistons", GSW = "Warriors",
+  HOU = "Rockets", IND = "Pacers", LAC = "Clippers", LAL = "Lakers", MEM = "Grizzlies",
+  MIA = "Heat", MIL = "Bucks", MIN = "Timberwolves", NOP = "Pelicans", NYK = "Knicks",
+  OKC = "Thunder", ORL = "Magic", PHI = "76ers", PHX = "Suns", POR = "Trail Blazers",
+  SAC = "Kings", SAS = "Spurs", TOR = "Raptors", UTA = "Jazz", WAS = "Wizards"
+)
+```
+
+```{r}
+test2$Away = str_replace_all(test2$Away, nba_teams)
+test2 = test2 %>%
+  select(-gameId, -teamId, -matchup, everything())
+test2 = test2 %>%
+  rename(Opp = Away) %>%
+  rename(Team = teamName)
+```
+
+```{r}
+Clean2020$Team = str_replace(Clean2020$Team, "^[^ ]+ ", "")
+
+Clean2020$Team = str_replace(Clean2020$Team, "Blazers", "Trail Blazers")
+
+Clean2020
+```
+
+```{r}
+big2020 = test2 %>%
+  left_join(Clean2020, by = "Team") %>%
+  left_join(Clean2020, by = c("Opp" = "Team"), suffix = c("_team", "_opp"))
+
+```
+
+```{r}
+big2020
+```
+
+```{r}
+big2020a = big2020 %>%
+  drop_na()
+```
+
+```{r}
+model2020 = lm(total_points ~ cumMeanPoints + PTS_All_opp + cumMeanTS + PTS_All_team + FD.PTS_All_team, data=big2020a)
+
+summary(model2020)
+```
+
+```{r}
+big2020a$predict1 = predict(model2020)
+
+big2020a %>%
+  select(total_points, predict1, everything())
+```
+
+```{r}
+#big2020i = big2020 %>%
+#  left_join(big2020 %>% select(gameId, Team, total_points), 
+#            by = "gameId", 
+#            suffix = c("", "_opp")) %>%
+#  filter(Team != Team_opp) %>%
+#  rename(opp_total_points = total_points_opp) %>%
+#  select(-Team_opp)  # Remove duplicate team column
+
+big2020i = big2020 %>%
+  left_join(big2020 %>% select(gameId, Team, total_points, cumMeanTS, cumMeanPoints),  
+            by = "gameId",  
+            suffix = c("", "_opp")) %>%  
+  filter(Team != Team_opp) %>%  
+  rename(opp_total_points = total_points_opp,  
+         opp_cumMeanTS = cumMeanTS_opp,
+         opp_cumMeanPoints = cumMeanPoints_opp) %>%  
+  select(-Team_opp)  # Remove duplicate team column
+```
+
+```{r}
+big2020i = big2020i %>%
+  select(total_points, opp_total_points, everything())
+```
+
+```{r}
+big2020H = big2020i %>%
+  filter(!str_detect(matchup, "@"))
+
+big2020H$spread = big2020H$total_points - big2020H$opp_total_points
+big2020H$total = big2020H$total_points + big2020H$opp_total_points
+
+big2020H
+```
+
+```{r}
+big2020HH = big2020H %>%
+  drop_na()
+
+model2020_total = lm(total ~ PTS_All_opp + FD.PTS_All_opp + cumMeanPoints, cumMeanTS, data=big2020HH)
+
+summary(model2020_total)
+```
+```{r}
+#model2020_spread = lm(spread ~ cumMeanPoints + PTS_All_opp + REB_All_opp + X3PM_All_opp, cumMeanTS, data = big2020HH)
+
+model2020_spread = lm(spread ~ cumMeanPoints + PTS_All_opp + FD.PTS_All_opp + FD.PTS_All_team, data = big2020HH)
+
+summary(model2020_spread)
+ 
+```
+
+```{r}
+big2020HH$total_predict = predict(model2020_total)
+
+ggplot(data=big2020HH) + 
+  geom_point(mapping=aes(total, total_predict)) + 
+  geom_abline(slope=1, intercept = 0)
+
+#so theoretically the games that were really high scoring in reality are screwing me over
+```
+
+```{r}
+big2020HH$spread_predict = predict(model2020_spread)
+
+ggplot(data=big2020HH) + 
+  geom_point(mapping=aes(spread, spread_predict)) + 
+  geom_abline(slope=1, intercept = 0)
+```
+
+```{r}
+URL.PG2021 = "https://www.fantasypros.com/daily-fantasy/nba/defense-vs-position.php?year=2021"
+PG2021html = URL.PG2021 %>%
+  read_html() %>%
+  html_table(fill=T) %>%
+  .[1]
+```
+
+```{r}
+PG2021 = as.data.frame(PG2021html)
+PG2021
+
+#every team first row is 2020 All
+#every team 13th row is 2020 PG
+#every team 21st row is 2020 SG
+#every team 17th row is 2020 SF
+#every team 9th row is 2020 PF
+#every team 5th row is 2020 C
+
+rows2021 = sort(c(seq(1, nrow(PG2021), by = 28), 
+                          seq(13, nrow(PG2021), by = 28), 
+                          seq(21, nrow(PG2021), by = 28), 
+                          seq(17, nrow(PG2021), by = 28), 
+                          seq(9, nrow(PG2021), by = 28), 
+                          seq(5, nrow(PG2021), by = 28)))
+PG2021 = PG2021[rows2021,]
+
+MU2021 = PG2021 %>%
+  select(Team, PTS, X3PM, REB, FD.PTS)
+
+pos = NA
+pos = c("All", "C", "PF", "PG", "SF", "SG")
+
+MU2021$Position = rep(pos, length.out = nrow(MU2021))
+
+Clean2021 = MU2021 %>%
+  pivot_wider(names_from = Position, values_from = c(PTS, `X3PM`, REB, FD.PTS))
+Clean2021$Team = str_replace(Clean2021$Team, "^[A-Z]{4}[a-z]* ", "")
+
+Clean2021$Team = str_replace(Clean2021$Team, "^[^ ]+ ", "")
+
+Clean2021$Team = str_replace(Clean2021$Team, "Blazers", "Trail Blazers")
+
+Clean2021
+```
+```{r}
+dfA2021 = dfA %>%
+  filter(season_year == "2021-22")
+
+dfA2021$TS = ((dfA2021$points)/(2*(dfA2021$fieldGoalsAttempted+0.44*dfA2021$freeThrowsAttempted)))*100
+
+test2021 = dfA2021 %>%
+  group_by(season_year, game_date, gameId, teamId, teamCity, teamName, matchup) %>%
+  summarize(
+    total_points = sum(points, na.rm = TRUE),
+    avg_TS = mean(TS, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+    arrange(gameId)
+
+test2021 = test2021 %>%
+  arrange(teamName, gameId) %>%
+  group_by(teamName) %>%
+  mutate(cumMeanPoints = slide_dbl(lag(total_points, default = NA), 
+                                   mean, .before = 6, .complete = TRUE))
+
+test2021 = test2021 %>%
+  arrange(teamName, gameId) %>%
+  group_by(teamName) %>%
+  mutate(cumMeanTS = slide_dbl(lag(avg_TS, default = NA),
+                               mean, .before = 6, .complete = TRUE))
+
+test2021$Away = str_extract(test2021$matchup, "(?<=vs\\. |@ ).*")
+test2021 = test2021 %>%
+  select(season_year, game_date, teamCity, teamName, Away, everything())
+
+test2021$Away = str_replace_all(test2021$Away, nba_teams)
+test2021 = test2021 %>%
+  select(-gameId, -teamId, -matchup, everything())
+test2021 = test2021 %>%
+  rename(Opp = Away) %>%
+  rename(Team = teamName)
+test2021
+```
+
+```{r}
+big2021 = test2021 %>%
+  left_join(Clean2021, by = "Team") %>%
+  left_join(Clean2021, by = c("Opp" = "Team"), suffix = c("_team", "_opp"))
+
+big2021a = big2021 %>%
+  drop_na()
+
+#big2021a$predict1 = predict(model2021)
+
+#big2021a %>%
+#  select(total_points, predict1, everything())
+
+big2021i = big2021 %>%
+  left_join(big2021 %>% select(gameId, Team, total_points, cumMeanTS, cumMeanPoints),  
+            by = "gameId",  
+            suffix = c("", "_opp")) %>%  
+  filter(Team != Team_opp) %>%  
+  rename(opp_total_points = total_points_opp,  
+         opp_cumMeanTS = cumMeanTS_opp,
+         opp_cumMeanPoints = cumMeanPoints_opp) %>%  
+  select(-Team_opp)  # Remove duplicate team column
+
+big2021i = big2021i %>%
+  select(total_points, opp_total_points, everything())
+
+big2021i = big2021i %>%
+  select(total_points, opp_total_points, everything())
+
+big2021H = big2021i %>%
+  filter(!str_detect(matchup, "@"))
+
+big2021H$spread = big2021H$total_points - big2021H$opp_total_points
+big2021H$total = big2021H$total_points + big2021H$opp_total_points
+
+big2021H
+```
+
+```{r}
+big2021HH = big2021H %>%
+  drop_na()
+
+#model2021_total = lm(total ~ PTS_All_opp + FD.PTS_All_opp + cumMeanPoints, cumMeanTS, data=big2021HH)
+
+model2021_total = lm(total ~ opp_cumMeanPoints + cumMeanPoints + FD.PTS_All_team + FD.PTS_All_opp + REB_C_team, data=big2021HH)
+
+#why does it only predict integers when you include a , (weight) variable ?
+
+summary(model2021_total)
+
+#big2021HH$total_predict = predict(model2021_total)
+
+#ggplot(data=big2021HH) + 
+#  geom_point(mapping=aes(total, total_predict)) + 
+#  geom_abline(slope=1, intercept = 0)
+```
+
+```{r}
+#model2021_spread = lm(spread ~ cumMeanPoints + PTS_All_opp + FD.PTS_All_opp + FD.PTS_All_team, data = big2021HH)
+
+model2021_spread = lm(spread ~ opp_cumMeanPoints + cumMeanPoints + FD.PTS_All_team + FD.PTS_All_opp, data=big2021HH)
+
+summary(model2021_spread)
+
+big2021HH$spread_predict = predict(model2021_spread)
+
+ggplot(data=big2021HH) + 
+  geom_point(mapping=aes(spread, spread_predict)) + 
+  geom_abline(slope=1, intercept = 0)
+```
+
+```{r}
+#lemme try sum rq
+
+#install.packages("glmnet")
+library(glmnet)
+```
+
+```{r}
+lasso_2021_df = big2021H %>%
+  select(-total_points, -opp_total_points, -total, -season_year) %>%
+  drop_na()
+
+lasso_2021_x = model.matrix(spread ~ ., data = lasso_2021_df)[, -1]  
+lasso_2021_y = lasso_2021_df$spread
+```
+
+```{r}
+set.seed(11) 
+
+lasso_model = cv.glmnet(lasso_2021_x, lasso_2021_y, alpha = 1)  # alpha = 1 means LASSO (0 would be Ridge)
+
+# Plot the cross-validation error
+plot(lasso_model)
+```
+```{r}
+# Get coefficients at optimal lambda (lambda.min is the best one found)
+selected_features = coef(lasso_model, s = "lambda.min")
+
+# Show only nonzero coefficients (selected variables)
+selected_features[selected_features != 0]
+```
+```{r}
+lasso_2021_predictions = predict(lasso_model, s = "lambda.min", newx = lasso_2021_x)
+```
+
+```{r}
+actual_vs_pred = data.frame(actual = lasso_2021_y, predicted = as.vector(lasso_2021_predictions))
+
+# Compute R-squared
+rsq <- cor(actual_vs_pred$actual, actual_vs_pred$predicted)^2
+print(paste("R-squared:", round(rsq, 4)))
+
+# Compute RMSE
+rmse <- sqrt(mean((actual_vs_pred$actual - actual_vs_pred$predicted)^2))
+print(paste("RMSE:", round(rmse, 4)))
+```
+
+```{r}
+lasso_2021_df_total = big2021H %>%
+  select(-total_points, -opp_total_points, -spread, -season_year) %>%
+  drop_na()
+
+lasso_2021_x_total = model.matrix(total ~ ., data = lasso_2021_df_total)[, -1]  
+lasso_2021_y_total = lasso_2021_df_total$total
+
+set.seed(11) 
+
+lasso_model_total = cv.glmnet(lasso_2021_x_total, lasso_2021_y_total, alpha = 1)  # alpha = 1 means LASSO (0 would be Ridge)
+
+# Plot the cross-validation error
+plot(lasso_model_total)
+
+# Get coefficients at optimal lambda (lambda.min is the best one found)
+selected_features_total = coef(lasso_model_total, s = "lambda.min")
+
+# Show only nonzero coefficients (selected variables)
+selected_features_total[selected_features_total != 0]
+
+lasso_2021_predictions_total = predict(lasso_model_total, s = "lambda.min", newx = lasso_2021_x_total)
+
+actual_vs_pred_total = data.frame(actual = lasso_2021_y_total, predicted = as.vector(lasso_2021_predictions_total))
+
+# Compute R-squared
+rsq_total <- cor(actual_vs_pred_total$actual, actual_vs_pred_total$predicted)^2
+print(paste("R-squared:", round(rsq_total, 4)))
+
+# Compute RMSE
+rmse_total <- sqrt(mean((actual_vs_pred_total$actual - actual_vs_pred_total$predicted)^2))
+print(paste("RMSE:", round(rmse_total, 4)))
+```
+
+```{r}
+#NBA dot com advanced stats
+#https://www.basketball-reference.com/leagues/NBA_2022.html#site_menu_link
+
+URL.NBA2021 = "https://www.basketball-reference.com/leagues/NBA_2022.html#site_menu_link"
+NBA2021_PerGame = URL.NBA2021 %>%
+  read_html() %>%
+  html_table(fill=T) %>%
+  .[9]
+
+NBA2021_PerGame = as.data.frame(NBA2021_PerGame)
+
+URL.NBA2021p = "https://www.basketball-reference.com/leagues/NBA_2022.html#site_menu_link"
+NBA2021_Adv = URL.NBA2021p %>%
+  read_html() %>%
+  html_table(fill=T) %>%
+  .[11]
+
+NBA2021_Adv = as.data.frame(NBA2021_Adv)
+```
+
+```{r}
+#18, 23, 28
+
+NBA2021_Adv = NBA2021_Adv %>%
+  select(-`Var.18`, -`Var.23`, -`Var.28`)
+NBA2021_Adv
+
+# Assuming 'data' is the dataframe where the first row contains headers
+# Step 1: Read the data (if not already done)
+# data <- read.table("your_data.csv", header = FALSE)  # Just an example
+
+# Step 2: Reassign the column names to the first row
+colnames(NBA2021_Adv) = as.character(NBA2021_Adv[1, ])
+
+# Step 3: Remove the first row (which is now redundant)
+NBA2021_Adv = NBA2021_Adv[-1, ]
+
+NBA2021_Adv$Team = str_replace(NBA2021_Adv$Team, "^[^ ]+ ", "")
+
+NBA2021_Adv$Team = str_replace(NBA2021_Adv$Team, "\\*", "")
+
+NBA2021_PerGame$Team = str_replace(NBA2021_PerGame$Team, "^[^ ]+ ", "")
+
+NBA2021_PerGame$Team = str_replace(NBA2021_PerGame$Team, "\\*", "")
+
+NBA2021_PerGame
+NBA2021_Adv
+```
+```{r}
+colnames(NBA2021_Adv)
+
+colnames(NBA2021_Adv) <- make.unique(colnames(NBA2021_Adv))
+
+anyDuplicated(colnames(NBA2021_Adv))
+
+NBA2021_Adv = NBA2021_Adv %>%
+  filter(Team != "Average")
+
+NBA2021_Adv = NBA2021_Adv %>%
+  type_convert()
+
+NBA2021 = left_join(NBA2021_Adv, NBA2021_PerGame, by = "Team")
+```
+
+```{r}
+complete2021 = left_join(big2021HH, NBA2021, by="Team")
+head(complete2021)
+```
+
+```{r}
+model224 = lm(total ~ Pace + cumMeanTS + cumMeanPoints, data = complete2021)
+summary(model224)
+```
+
+```{r}
+model225_total = lm(total ~ cumMeanPoints + PTS_All_opp + opp_cumMeanPoints + Pace, data=complete2021)
+summary(model225_total)
+
+complete2021 = complete2021%>%
+  drop_na()
+
+complete2021$totalpred225 = predict(model225_total)
+
+complete2021 %>%
+  select(totalpred225, total, everything())
+```
+```{r}
+mean(abs(complete2021$total-complete2021$totalpred225))
+```
+
+```{r}
+lasso_2021_nba = complete2021 %>%
+  select(-total_points, -opp_total_points, -spread, -season_year) %>%
+  drop_na()
+
+lasso_2021_x_nba = model.matrix(total ~ ., data = lasso_2021_nba)[, -1]  
+lasso_2021_y_nba = lasso_2021_nba$total
+
+set.seed(11) 
+
+lasso_model_nba = cv.glmnet(lasso_2021_x_nba, lasso_2021_y_nba, alpha = 1)  # alpha = 1 means LASSO (0 would be Ridge)
+
+# Plot the cross-validation error
+plot(lasso_model_nba)
+
+# Get coefficients at optimal lambda (lambda.min is the best one found)
+selected_features_nba = coef(lasso_model_nba, s = "lambda.min")
+
+# Show only nonzero coefficients (selected variables)
+selected_features_nba[selected_features_nba != 0]
+
+lasso_2021_predictions_nba = predict(lasso_model_nba, s = "lambda.min", newx = lasso_2021_x_nba)
+
+actual_vs_pred_nba = data.frame(actual = lasso_2021_y_nba, predicted = as.vector(lasso_2021_predictions_nba))
+
+# Compute R-squared
+rsq_nba <- cor(actual_vs_pred_nba$actual, actual_vs_pred_nba$predicted)^2
+print(paste("R-squared:", round(rsq_nba, 4)))
+
+# Compute RMSE
+rmse_nba <- sqrt(mean((actual_vs_pred_nba$actual - actual_vs_pred_nba$predicted)^2))
+print(paste("RMSE:", round(rmse_nba, 4)))
+```
+```{r}
+set.seed(12)  # Ensure reproducibility
+
+cv_lasso = cv.glmnet(lasso_2021_x_nba,lasso_2021_y_nba, alpha = 1, nfolds = 10)  # 10-fold CV
+
+best_lambda = cv_lasso$lambda.min  # Lambda that minimizes CV error
+se_lambda = cv_lasso$lambda.1se    # More regularized (1 standard error rule)
+
+final_lasso = glmnet(lasso_2021_x_nba, lasso_2021_y_nba, alpha = 1, lambda = best_lambda)
+
+predictions = predict(final_lasso, newx = lasso_2021_x_nba)
+
+rmse = sqrt(mean((lasso_2021_y_nba - predictions)^2))
+print(rmse)
+```
+
+```{r}
+step2021 = complete2021 %>%
+  select(-total_points, -opp_total_points, -season_year, -game_date, -teamCity, -Team, -Opp, -gameId, -teamId, -matchup, -spread_predict, -`Rk.x`, -Arena, -G, -avg_TS)
+
+#sapply(step2021, function(x) length(unique(x)))
+
+full_model = lm(total ~ ., data = step2021)  # Start with all variables
+step_model = step(full_model, direction = "both")  # Stepwise selection
+summary(step_model)  # View final model
+
+complete2021$step_total = predict(step_model)
+complete2021 %>%
+  select(total, step_total, everything())
+mean(abs(complete2021$total-complete2021$step_total))
+```
+
+```{r}
+step2021 = complete2021 %>%
+  select(-total_points, -opp_total_points, -season_year, -game_date, -teamCity, -Team, -Opp, -gameId, -teamId, -matchup, -spread_predict, -`Rk.x`, -Arena, -G, -avg_TS)
+
+#sapply(step2021, function(x) length(unique(x)))
+
+full_model_spread = lm(spread ~ ., data = step2021)  # Start with all variables
+step_model_spread = step(full_model_spread, direction = "both")  # Stepwise selection
+summary(step_model_spread)  # View final model
+
+complete2021$step_spread = predict(step_model_spread)
+complete2021 %>%
+  select(spread, step_spread, everything())
+mean(abs(complete2021$spread-complete2021$step_spread))
+```
+
+```{r}
+library(car)
+vif(step_model)
+vif(step_model_spread)
+```
+```{r}
+plot(step_model_spread, which = 1)  # Residuals vs. Fitted
+plot(step_model_spread, which = 2)  # Q-Q Plot
+```
+```{r}
+#install.packages("xgboost")
+library(xgboost)
+```
+```{r}
+step2021t = step2021 %>%
+  select(-totalpred225, -step_total, -spread, -xgb_total, -xgb_spread)
+
+xgb2021_total$Team = as.numeric(as.factor(xgb2021_total$Team))
+
+# Convert data to matrix (excluding the target variable)
+X <- as.matrix(xgb2021_total %>% select(-total))  
+y <- xgb2021_total$total  # Target variable
+
+# Create XGBoost DMatrix
+dtrain <- xgb.DMatrix(data = X, label = y)
+
+cv_model <- xgb.cv(
+  data = dtrain,
+  nrounds = 200,           # Number of boosting rounds
+  nfold = 15,               # 5-fold cross-validation
+  objective = "reg:squarederror",  # For regression (change for classification)
+  eval_metric = "rmse",    # Evaluation metric
+  eta = 0.05,               # Learning rate
+  max_depth = 8,           # Maximum tree depth
+  early_stopping_rounds = 10,  # Stop if no improvement
+  verbose = 1              # Show progress
+)
+
+best_nrounds <- cv_model$best_iteration  # Get the best iteration count
+
+final_model <- xgboost(
+  data = dtrain,
+  nrounds = best_nrounds,
+  objective = "reg:squarederror",
+  eval_metric = "rmse",
+  eta = 0.1,
+  max_depth = 8
+)
+
+predictions <- predict(final_model, X)  # Predict on the full dataset
+
+step2021$xgb_total = predictions
+
+mean(abs(step2021$total - step2021$xgb_total))
+
+step2021 %>%
+  select(total, xgb_total, everything())
+```
+
+```{r}
+step2021s = step2021 %>%
+  select(-totalpred225, -step_total, -total, -xgb_total, -xgb_spread)
+
+step2021s$Team = as.numeric(as.factor(step2021s$Team))
+
+# Convert data to matrix (excluding the target variable)
+Xs <- as.matrix(step2021s %>% select(-spread))  
+ys <- step2021s$spread  # Target variable
+
+# Create XGBoost DMatrix
+dtrains <- xgb.DMatrix(data = Xs, label = ys)
+
+cv_models <- xgb.cv(
+  data = dtrains,
+  nrounds = 200,           # Number of boosting rounds
+  nfold = 15,               # 5-fold cross-validation
+  objective = "reg:squarederror",  # For regression (change for classification)
+  eval_metric = "rmse",    # Evaluation metric
+  eta = 0.05,               # Learning rate
+  max_depth = 6,           # Maximum tree depth
+  early_stopping_rounds = 10,  # Stop if no improvement
+  verbose = 1              # Show progress
+)
+
+best_nroundss <- cv_models$best_iteration  # Get the best iteration count
+
+final_models <- xgboost(
+  data = dtrains,
+  nrounds = best_nroundss,
+  objective = "reg:squarederror",
+  eval_metric = "rmse",
+  eta = 0.1,
+  max_depth = 8
+)
+
+predictionss <- predict(final_models, Xs)  # Predict on the full dataset
+
+step2021$xgb_spread = predictionss
+
+mean(abs(step2021$spread - step2021$xgb_spread))
+
+step2021 %>%
+  select(spread, xgb_spread, total, xgb_total, everything())
+
+#https://www.geeksforgeeks.org/xgboost/
+```
+
+```{r}
+xgb2021_total = step2021 %>%
+  select(-spread, -totalpred225, -step_total, -xgb_total, -xgb_spread)
+xgb2021_total$Team = as.numeric(as.factor(xgb2021_total$Team))
+```
+
+
+```{r}
+library(caret)
+library(xgboost)
+
+# Define parameter grid
+tune_grid <- expand.grid(
+  nrounds = seq(50, 300, by = 50),   # Number of boosting rounds
+  eta = c(0.01, 0.05, 0.1, 0.3),     # Learning rate
+  max_depth = c(3, 6, 9),            # Tree depth
+  gamma = c(0, 0.1, 0.2),            # Regularization
+  colsample_bytree = c(0.6, 0.8, 1), # Features per tree
+  min_child_weight = c(1, 3, 5),     # Minimum instance weight
+  subsample = c(0.6, 0.8, 1)         # Row sampling
+)
+
+# Create predictor matrix (excluding the target column)
+train_data <- xgb2021_total %>% select(-total) %>% as.matrix()
+
+# Target variable
+train_labels <- xgb2021_total$total
+
+# Train model using caret
+xgb_train <- train(
+  x = as.matrix(train_data),    # Features
+  y = train_labels,             # Target variable
+  method = "xgbTree",
+  trControl = trainControl(method = "cv", number = 5), # 5-fold cross-validation
+  tuneGrid = tune_grid,
+  metric = "RMSE"               # Optimization metric
+)
+
+# Best parameters
+print(xgb_train$bestTune)
+```
+```{r}
+URL.PG2024 = "https://www.fantasypros.com/daily-fantasy/nba/defense-vs-position.php?year=2024"
+PG2024html = URL.PG2024 %>%
+  read_html() %>%
+  html_table(fill=T) %>%
+  .[1]
+
+PG2024 = as.data.frame(PG2024html)
+PG2024
+
+#every team first row is 2020 All
+#every team 13th row is 2020 PG
+#every team 21st row is 2020 SG
+#every team 17th row is 2020 SF
+#every team 9th row is 2020 PF
+#every team 5th row is 2020 C
+
+rows2024 = sort(c(seq(1, nrow(PG2024), by = 28), 
+                          seq(13, nrow(PG2024), by = 28), 
+                          seq(21, nrow(PG2024), by = 28), 
+                          seq(17, nrow(PG2024), by = 28), 
+                          seq(9, nrow(PG2024), by = 28), 
+                          seq(5, nrow(PG2024), by = 28)))
+PG2024 = PG2024[rows2024,]
+
+MU2024 = PG2024 %>%
+  select(Team, PTS, X3PM, REB, FD.PTS)
+
+pos = NA
+pos = c("All", "C", "PF", "PG", "SF", "SG")
+
+MU2024$Position = rep(pos, length.out = nrow(MU2024))
+
+Clean2024 = MU2024 %>%
+  pivot_wider(names_from = Position, values_from = c(PTS, `X3PM`, REB, FD.PTS))
+Clean2024$Team = str_replace(Clean2024$Team, "^[A-Z]{4}[a-z]* ", "")
+
+Clean2024$Team = str_replace(Clean2024$Team, "^[^ ]+ ", "")
+
+Clean2024$Team = str_replace(Clean2024$Team, "Blazers", "Trail Blazers")
+
+Clean2024
+
+#SIKE
+#the dfA has run out
+#gotta use this now https://www.kaggle.com/datasets/eduardopalmieri/nba-player-stats-season-2425
+#https://www.kaggle.com/datasets/eoinamoore/historical-nba-data-and-player-box-scores
+
+```
+
+```{r}
+kaggle = read_csv("/Users/arthurlennard/Downloads/database_24_25.csv")
+#kaggle[16512,]
+#goes to Feb 7
+
+players = read_csv("/Users/arthurlennard/Downloads/archive (3)/PlayerStatistics.csv")
+#goes to yesterday!
+players2025 = players %>%
+  filter(gameDate > as.POSIXct("2024-09-02"))
+
+```
+
+```{r}
+players2025$TS = ((players2025$points)/(2*(players2025$fieldGoalsAttempted+0.44*players2025$freeThrowsAttempted)))*100
+players2025$TSmins = (players2025$TS * players2025$numMinutes)/100
+#what if I do each player's TS and then average those but weight them by how many minutes they play (or points)
+
+players2025_group = players2025 %>%
+  group_by(gameDate, gameId, playerteamName, opponentteamName) %>%
+  summarize(
+    total_points = sum(points, na.rm = TRUE),
+    avg_TS = mean(TS, na.rm = TRUE),
+    avg_TSmins = mean(TSmins, na.rm = TRUE),
+    home = sum(home),
+    .groups = "drop"
+  ) %>%
+    arrange(gameId)
+
+players2025_group = players2025_group %>%
+  arrange(playerteamName, gameId) %>%
+  group_by(playerteamName) %>%
+  mutate(cumMeanPoints = slide_dbl(lag(total_points, default = NA), 
+                                   mean, .before = 6, .complete = TRUE))
+
+players2025_group = players2025_group %>%
+  arrange(playerteamName, gameId) %>%
+  group_by(playerteamName) %>%
+  mutate(cumMeanTS = slide_dbl(lag(avg_TS, default = NA),
+                               mean, .before = 6, .complete = TRUE))
+
+players2025_group = players2025_group %>%
+  arrange(playerteamName, gameId) %>%
+  group_by(playerteamName) %>%
+  mutate(cumMeanTSmins = slide_dbl(lag(avg_TSmins, default = NA), 
+                                   mean, .before = 6, .complete = TRUE))
+```
+
+```{r}
+players2025_group_home = players2025_group %>%
+  left_join(players2025_group %>% select(gameId, playerteamName, total_points, cumMeanTS, cumMeanPoints, cumMeanTSmins),  
+            by = "gameId",  
+            suffix = c("", "_opp")) %>%  
+  filter(playerteamName != playerteamName_opp) %>%  
+  rename(opp_total_points = total_points_opp,  
+         opp_cumMeanTS = cumMeanTS_opp,
+         opp_cumMeanPoints = cumMeanPoints_opp,
+         opp_cumMeanTSmins = cumMeanTSmins_opp) %>%  
+  select(-playerteamName_opp)  # Remove duplicate team column
+```
+
+```{r}
+players2025_group_home = players2025_group_home %>%
+  select(total_points, opp_total_points, everything())
+```
+
+```{r}
+players2025_group_home = players2025_group_home %>%
+  filter(home != 0)
+
+players2025_group_home$spread = players2025_group_home$total_points - players2025_group_home$opp_total_points
+players2025_group_home$total = players2025_group_home$total_points + players2025_group_home$opp_total_points
+
+players2025_group_home
+
+players2025_group_home = players2025_group_home %>%
+  rename("Team" = playerteamName) %>%
+  rename("Opp" = opponentteamName)
+
+big2025a = players2025_group_home %>%
+  left_join(Clean2024, by="Team") %>%
+  left_join(Clean2024, by = c("Opp" = "Team"), suffix = c("_team", "_opp"))
+```
+
+```{r}
+URL.NBA2025 = "https://www.basketball-reference.com/leagues/NBA_2025.html#site_menu_link"
+NBA2025_PerGame = URL.NBA2025 %>%
+  read_html() %>%
+  html_table(fill=T) %>%
+  .[9]
+
+NBA2025_PerGame = as.data.frame(NBA2025_PerGame)
+
+URL.NBA2025p = "https://www.basketball-reference.com/leagues/NBA_2025.html#site_menu_link"
+NBA2025_Adv = URL.NBA2025p %>%
+  read_html() %>%
+  html_table(fill=T) %>%
+  .[11]
+
+NBA2025_Adv = as.data.frame(NBA2025_Adv)
+
+NBA2025_Adv = NBA2025_Adv %>%
+  select(-`Var.18`, -`Var.23`, -`Var.28`)
+NBA2025_Adv
+
+# Assuming 'data' is the dataframe where the first row contains headers
+# Step 1: Read the data (if not already done)
+# data <- read.table("your_data.csv", header = FALSE)  # Just an example
+
+# Step 2: Reassign the column names to the first row
+colnames(NBA2025_Adv) = as.character(NBA2025_Adv[1, ])
+
+# Step 3: Remove the first row (which is now redundant)
+NBA2025_Adv = NBA2025_Adv[-1, ]
+
+NBA2025_Adv$Team = str_replace(NBA2025_Adv$Team, "^[^ ]+ ", "")
+NBA2025_Adv$Team = str_replace(NBA2025_Adv$Team, "^[^ ]+ ", "")
+
+#NBA2025_Adv$Team = str_replace(NBA2025_Adv$Team, "\\*", "")
+
+NBA2025_PerGame$Team = str_replace(NBA2025_PerGame$Team, "^[^ ]+ ", "")
+NBA2025_PerGame$Team = str_replace(NBA2025_PerGame$Team, "^[^ ]+ ", "")
+
+#NBA2025_PerGame$Team = str_replace(NBA2025_PerGame$Team, "\\*", "")
+
+NBA2025_PerGame
+NBA2025_Adv
+
+colnames(NBA2025_Adv)
+
+colnames(NBA2025_Adv) <- make.unique(colnames(NBA2025_Adv))
+
+anyDuplicated(colnames(NBA2025_Adv))
+
+NBA2025_Adv = NBA2025_Adv %>%
+  filter(Team != "Average")
+
+NBA2025_Adv = NBA2025_Adv %>%
+  type_convert()
+
+NBA2025 = left_join(NBA2025_Adv, NBA2025_PerGame, by = "Team")
+
+#NBA2025 = NBA2025 %>%
+#  select(-Team)
+
+NBA2025$Team = str_replace(NBA2025$Team, "Blazers", "Trail Blazers")
+
+#complete2021 = left_join(big2021HH, NBA2021, by="Team")
+#head(complete2021)
+```
+```{r}
+complete2025 = left_join(big2025a, NBA2025, by="Team")
+```
+
+```{r}
+complete2025 = complete2025 %>%
+  arrange(gameDate)
+
+xgb2025_total = complete2025 %>%
+  select(-gameDate, -gameId, -avg_TS, -spread, -Arena, -Attend., -`Attend./G`, -Rk.y, -G, -MP, -total_points, -opp_total_points, -avg_TSmins)
+
+xgb2025_spread = complete2025 %>%
+  select(-gameDate, -gameId, -avg_TS, -total, -Arena, -Attend., -`Attend./G`, -Rk.y, -G, -MP, -total_points, -opp_total_points, -avg_TSmins)
+```
+
+```{r}
+total_train_data = xgb2025_total[70:844, ] 
+total_test_data = xgb2025_total[845:944, ]
+
+spread_train_data = xgb2025_spread[70:844, ] 
+spread_test_data = xgb2025_spread[845:944, ]
+```
+
+```{r}
+library(xgboost)
+#total_test_data = total_test_data %>%
+#  select(-every_total)
+#  select(-xgb_total)
+
+#PREDICTING TOTAL
+xgb2025_total_a = total_train_data
+
+xgb2025_total_a$Team = as.numeric(as.factor(xgb2025_total_a$Team))
+xgb2025_total_a$Opp = as.numeric(as.factor(xgb2025_total_a$Opp))
+
+xgb2025_total_b = total_test_data
+
+xgb2025_total_b$Team = as.numeric(as.factor(xgb2025_total_b$Team))
+xgb2025_total_b$Opp = as.numeric(as.factor(xgb2025_total_b$Opp))
+
+# Convert data to matrix (excluding the target variable)
+Xs <- as.matrix(xgb2025_total_a %>% select(-total))  
+ys <- xgb2025_total_a$total  # Target variable
+
+Zs = as.matrix(xgb2025_total_b %>% select(-total))
+
+# Create XGBoost DMatrix
+dtrains <- xgb.DMatrix(data = Xs, label = ys)
+
+cv_models <- xgb.cv(
+  data = dtrains,
+  nrounds = 200,           # Number of boosting rounds
+  nfold = 15,               # 5-fold cross-validation
+  objective = "reg:squarederror",  # For regression (change for classification)
+  eval_metric = "rmse",    # Evaluation metric
+  eta = 0.1,               # Learning rate
+  max_depth = 8,           # Maximum tree depth
+  early_stopping_rounds = 10,  # Stop if no improvement
+  verbose = 1              # Show progress
+)
+
+best_nroundss <- cv_models$best_iteration  # Get the best iteration count
+
+final_modelt <- xgboost(
+  data = dtrains,
+  nrounds = best_nroundss,
+  objective = "reg:squarederror",
+  eval_metric = "rmse",
+  eta = 0.1,
+  max_depth = 6
+)
+
+predictionss <- predict(final_modelt, Zs)
+
+total_test_data$xgb_total = predictionss
+
+mean(abs(total_test_data$total - total_test_data$xgb_total))
+
+total_test_data %>%
+  select(total, xgb_total, everything())
+```
+
+```{r}
+importance_matrix <- xgb.importance(model = final_modelt)
+print(importance_matrix)
+xgb.plot.importance(importance_matrix)
+```
+
+```{r}
+#spread_test_data = spread_test_data %>%
+#  select(-every_spread)
+#  select(-xgb_spread)
+
+#PREDICTING spread
+xgb2025_spread_a = spread_train_data
+
+xgb2025_spread_a$Team = as.numeric(as.factor(xgb2025_spread_a$Team))
+xgb2025_spread_a$Opp = as.numeric(as.factor(xgb2025_spread_a$Opp))
+
+xgb2025_spread_b = spread_test_data
+
+xgb2025_spread_b$Team = as.numeric(as.factor(xgb2025_spread_b$Team))
+xgb2025_spread_b$Opp = as.numeric(as.factor(xgb2025_spread_b$Opp))
+
+# Convert data to matrix (excluding the target variable)
+Xs <- as.matrix(xgb2025_spread_a %>% select(-spread))  
+ys <- xgb2025_spread_a$spread  # Target variable
+
+Zs = as.matrix(xgb2025_spread_b %>% select(-spread))
+
+# Create XGBoost DMatrix
+dtrains <- xgb.DMatrix(data = Xs, label = ys)
+
+cv_models <- xgb.cv(
+  data = dtrains,
+  nrounds = 200,           # Number of boosting rounds
+  nfold = 20,               # 5-fold cross-validation
+  objective = "reg:squarederror",  # For regression (change for classification)
+  eval_metric = "mae",    # Evaluation metric
+  eta = 0.1,               # Learning rate
+  max_depth = 8,           # Maximum tree depth
+  early_stopping_rounds = 10,  # Stop if no improvement
+  verbose = 1              # Show progress
+)
+
+best_nroundss <- cv_models$best_iteration  # Get the best iteration count
+
+final_models <- xgboost(
+  data = dtrains,
+  nrounds = best_nroundss,
+  objective = "reg:squarederror",
+  eval_metric = "mae",
+  eta = 0.1,
+  max_depth = 8
+)
+
+predictionss <- predict(final_models, Zs)
+
+spread_test_data$xgb_spread = predictionss
+
+mean(abs(spread_test_data$spread - spread_test_data$xgb_spread))
+
+spread_test_data %>%
+  select(spread, xgb_spread, everything())
+```
+
+```{r}
+importance_matrix <- xgb.importance(model = final_models)
+print(importance_matrix)
+xgb.plot.importance(importance_matrix)
+```
+
+```{r}
+step_train_total = total_train_data %>%
+  drop_na()
+
+total_step_model = lm(total ~ ., data = step_train_total)  # Start with all variables
+step_model_total = step(total_step_model, direction = "forward")  # Stepwise selection
+summary(step_model_total)  # View final model
+
+step_test_total = total_test_data %>%
+  select(-xgb_total)
+  #select(-every_total)
+
+# Check columns in both datasets
+colnames(step_train_total)
+colnames(step_test_total)
+
+step_test_total$step_total = predict(step_model_total, newdata=step_test_total)
+step_test_total = step_test_total %>%
+  select(total, step_total, everything()) %>%
+  drop_na()
+
+mean(abs(step_test_total$total-step_test_total$step_total))
+```
+
+```{r}
+step_train_spread = spread_train_data %>%
+  drop_na()
+
+spread_step_model = lm(spread ~ ., data = step_train_spread)  # Start with all variables
+step_model_spread = step(spread_step_model, direction = "forward")  # Stepwise selection
+summary(step_model_spread)  # View final model
+
+step_test_spread = spread_test_data %>%
+  select(-xgb_spread)
+
+# Check columns in both datasets
+colnames(step_train_spread)
+colnames(step_test_spread)
+
+step_test_spread$step_spread = predict(step_model_spread, newdata=step_test_spread)
+step_test_spread = step_test_spread %>%
+  select(spread, step_spread, everything()) %>%
+  drop_na()
+
+mean(abs(step_test_spread$spread-step_test_spread$step_spread))
+```
+
+```{r}
+total_test_data = total_test_data %>%
+  #select(-every_total)
+  select(-xgb_total)
+
+every_total = lm(total ~ Team + Opp, data=total_train_data)
+summary(every_total)
+
+every_total_pred <- predict(every_total, newdata = total_test_data)
+
+total_test_data$every_total = every_total_pred
+
+total_test_data = total_test_data %>%
+  drop_na()
+
+mean(abs(total_test_data$total - total_test_data$every_total))
+
+total_test_data %>%
+  select(total, every_total, everything())
+```
+
+```{r}
+every_spread = lm(spread ~ Opp + Team, data=spread_train_data)
+summary(every_spread)
+
+spread_test_data = spread_test_data %>%
+#  select(-every_spread) %>%
+  select(-xgb_spread)
+
+
+every_spread_pred <- predict(every_spread, newdata = spread_test_data)
+
+spread_test_data$every_spread = every_spread_pred
+
+spread_test_data = spread_test_data %>%
+  drop_na()
+
+mean(abs(spread_test_data$spread - spread_test_data$every_spread))
+
+spread_test_data %>%
+  select(spread, every_spread, everything())
+```
+
+```{r}
+#xgb for total
+#forward step for spread 
+```
+
+```{r}
+#xgb2025_total
+final_test = complete2025 %>%
+  arrange(desc(gameDate)) %>%
+  distinct(Team, .keep_all = TRUE)
+just_team = final_test %>%
+  select(-c(22:65)) %>%
+  select(-c(13:15))
+
+just_home_team = just_team %>%
+  select(-total_points, -opp_total_points, -gameDate, -gameId, -Opp, -avg_TS, -avg_TSmins, -spread, -total, -Arena, -Attend., -`Attend./G`, -Rk.y, -G, -MP,)
+
+just_home_team
+
+#3/2
+#sun vs twolves, lakers vs clippers
+
+#just_away_team = complete2025 %>%
+#  arrange(desc(gameDate)) %>%
+#  distinct(Opp, .keep_all = TRUE)
+#just_away_team
+
+just_away_team = complete2025 %>%
+  group_by(Opp) %>%
+  slice_max(order_by = gameDate, n = 1) %>%  # Keep the most recent row per team
+  ungroup() %>%
+  select(c(6,13,14,15,22:65))
+just_away_team
+```
+
+```{r}
+suns_home = just_home_team %>%
+  filter(Team == "Suns")
+timberwolves_away = just_away_team %>%
+  filter(Opp == "Timberwolves")
+
+test_game_1 = bind_cols(suns_home, timberwolves_away) %>%
+  select(Team, Opp, everything())
+test_game_1
+
+test_game_1_m = test_game_1
+test_game_1_m$Team = as.numeric(as.factor(test_game_1_m$Team))
+test_game_1_m$Opp = as.numeric(as.factor(test_game_1_m$Opp))
+ZZ = as.matrix(test_game_1_m)
+
+ZZ = ZZ[, colnames(Zs), drop = FALSE]
+
+test_game_1_pred = predict(final_modelt, ZZ)
+test_game_1_pred_spread_xgb = predict(final_models, ZZ)
+```
+
+```{r}
+lakers_home = just_home_team %>%
+  filter(Team == "Lakers")
+clippers_away = just_away_team %>%
+  filter(Opp == "Clippers")
+
+test_game_2 = bind_cols(lakers_home, clippers_away) %>%
+  select(Team, Opp, everything())
+test_game_2
+
+test_game_2_m = test_game_2
+test_game_2_m$Team = as.numeric(as.factor(test_game_2_m$Team))
+test_game_2_m$Opp = as.numeric(as.factor(test_game_2_m$Opp))
+Z2 = as.matrix(test_game_2_m)
+
+Z2 = Z2[, colnames(Zs), drop = FALSE]
+
+test_game_2_pred = predict(final_modelt, Z2)
+test_game_2_pred_spread_xgb = predict(final_models, Z2)
+```
+
+```{r}
+test_game_1_pred_spread = predict(step_model_spread, newdata=test_game_1)
+test_game_2_pred_spread = predict(step_model_spread, newdata=test_game_2)
+```
+
+```{r}
+jazz_home = just_home_team %>%
+  filter(Team == "Jazz")
+pelicans_away = just_away_team %>%
+  filter(Opp == "Pelicans")
+
+test_game_3 = bind_cols(jazz_home, pelicans_away) %>%
+  select(Team, Opp, everything())
+test_game_3
+
+test_game_3_m = test_game_3
+test_game_3_m$Team = as.numeric(as.factor(test_game_3_m$Team))
+test_game_3_m$Opp = as.numeric(as.factor(test_game_3_m$Opp))
+Z3 = as.matrix(test_game_3_m)
+
+Z3 = Z3[, colnames(Zs), drop = FALSE]
+
+test_game_3_pred_total_xgb = predict(final_modelt, Z3)
+test_game_3_pred_spread_xgb = predict(final_models, Z3)
+test_game_3_pred_spread_step = predict(step_model_spread, newdata=test_game_3)
+test_game_3_pred_total_step = predict(step_model_total, newdata=test_game_3)
+```
+
+```{r}
+magic_home = just_home_team %>%
+  filter(Team == "Jazz")
+raptors_away = just_away_team %>%
+  filter(Opp == "Pistons")
+
+test_game_4 = bind_cols(magic_home, raptors_away) %>%
+  select(Team, Opp, everything())
+test_game_4
+
+test_game_4_m = test_game_4
+test_game_4_m$Team = as.numeric(as.factor(test_game_4_m$Team))
+test_game_4_m$Opp = as.numeric(as.factor(test_game_4_m$Opp))
+Z4 = as.matrix(test_game_4_m)
+
+Z4 = Z4[, colnames(Zs), drop = FALSE]
+
+test_game_4_pred_total_xgb = predict(final_modelt, Z4)
+test_game_4_pred_spread_xgb = predict(final_models, Z4)
+test_game_4_pred_spread_step = predict(step_model_spread, newdata=test_game_4)
+test_game_4_pred_total_step = predict(step_model_total, newdata=test_game_4)
+```
+
+```{r}
+predict_nba_game <- function(home_team, away_team, home_data, away_data, model_total, model_spread, reference_matrix) {
+  # Filter the most recent data for the specified teams
+  home_row <- home_data %>% filter(Team == home_team)
+  away_row <- away_data %>% filter(Opp == away_team)
+  
+  # Combine the two rows into a single row
+  test_game <- bind_cols(home_row, away_row) %>%
+    select(Team, Opp, everything())  # Ensure Team and Opp are first
+  
+  # Convert categorical teams to numeric
+  test_game$Team <- as.numeric(as.factor(test_game$Team))
+  test_game$Opp <- as.numeric(as.factor(test_game$Opp))
+  
+  # Convert to matrix and match column order with training data
+  test_matrix <- as.matrix(test_game)
+  test_matrix <- test_matrix[, colnames(reference_matrix), drop = FALSE] 
+  
+  # Make predictions using the trained models
+  pred_total <- predict(model_total, test_matrix)
+  pred_spread <- predict(model_spread, test_matrix)
+  
+  # Return predictions as a named list
+  return(list(Total_Prediction = pred_total, Spread_Prediction = pred_spread))
+}
+```
+
+```{r}
+predictions <- predict_nba_game(
+  home_team = "Jazz",
+  away_team = "Pistons",
+  home_data = just_home_team,
+  away_data = just_away_team,
+  model_total = final_modelt,
+  model_spread = final_models,
+  reference_matrix = Zs
+)
+
+print(predictions)
+
+#it's still training on the first however many games so you can change the train to the whole thing now if you want 
+#do this when you read in the new csv with a few more rows on it probably 
+```
+```{r}
+library(xgboost)
+final_train_spread = xgb2025_spread
+
+final_train_spread$Team = as.numeric(as.factor(final_train_spread$Team))
+final_train_spread$Opp = as.numeric(as.factor(final_train_spread$Opp))
+
+X_spread = as.matrix(final_train_spread %>% select(-spread))
+Y_spread = final_train_spread$spread
+
+# Create XGBoost DMatrix
+final_spread_xgb = xgb.DMatrix(data = X_spread, label = Y_spread)
+
+set.seed(13)
+cv_models_spread = xgb.cv(
+  data = final_spread_xgb,
+  nrounds = 200,           # Number of boosting rounds
+  nfold = 20,               
+  objective = "reg:squarederror", 
+  eval_metric = "mae",    
+  eta = 0.1,               # Learning rate
+  max_depth = 8,           
+  early_stopping_rounds = 10, 
+  verbose = 1              
+)
+
+best_nrounds_spread = cv_models_spread$best_iteration  # Get the best iteration count
+
+final_model_spread = xgboost(
+  data = final_spread_xgb,
+  nrounds = best_nrounds_spread,
+  objective = "reg:squarederror",
+  eval_metric = "mae",
+  eta = 0.1,
+  max_depth = 8
+)
+```
+
+```{r}
+final_train_total = xgb2025_total
+
+final_train_total$Team = as.numeric(as.factor(final_train_total$Team))
+final_train_total$Opp = as.numeric(as.factor(final_train_total$Opp))
+
+X_total = as.matrix(final_train_total %>% select(-total))
+Y_total = final_train_total$total
+
+# Create XGBoost DMatrix
+final_total_xgb = xgb.DMatrix(data = X_total, label = Y_total)
+
+set.seed(13)
+cv_models_total = xgb.cv(
+  data = final_total_xgb,
+  nrounds = 200,           # Number of boosting rounds
+  nfold = 15,               
+  objective = "reg:squarederror",  
+  eval_metric = "mae",    
+  eta = 0.1,               # Learning rate
+  max_depth = 8,           
+  early_stopping_rounds = 10,
+  verbose = 1              
+)
+
+best_nrounds_total = cv_models_total$best_iteration  # Get the best iteration count
+
+final_model_total = xgboost(
+  data = final_total_xgb,
+  nrounds = best_nrounds_total,
+  objective = "reg:squarederror",
+  eval_metric = "mae",
+  eta = 0.1,
+  max_depth = 6
+)
+```
+
+
+```{r}
+predictions_all = predict_nba_game(
+  home_team = "Kings",
+  away_team = "Spurs",
+  home_data = just_home_team,
+  away_data = just_away_team,
+  model_total = final_model_total,
+  model_spread = final_model_spread,
+  reference_matrix = Zs
+)
+
+predictions_all
+
+```
+```{r}
+importance_matrix_spread <- xgb.importance(model = final_model_spread)
+print(importance_matrix_spread)
+xgb.plot.importance(importance_matrix_spread)
+
+importance_matrix_total <- xgb.importance(model = final_model_total)
+print(importance_matrix_total)
+xgb.plot.importance(importance_matrix_total)
+```
+```{r}
+master = read.csv("/Users/arthurlennard/Downloads/Predictions.csv")
+master$Away = str_replace(master$Away, "^[^ ]+ ", "")
+master$Away = str_replace(master$Away, "^[^ ]+ ", "")
+master$Away = str_replace(master$Away, "Blazers", "Trail Blazers")
+
+master$Home = str_replace(master$Home, "^[^ ]+ ", "")
+master$Home = str_replace(master$Home, "^[^ ]+ ", "")
+master$Home = str_replace(master$Home, "Blazers", "Trail Blazers")
+
+pred = rep(NA, nrow(master))
+  
+for (i in 1:nrow(master)){
+
+  pred = predict_nba_game(
+  home_team = master$Home[i],
+  away_team = master$Away[i],
+  home_data = just_home_team,
+  away_data = just_away_team,
+  model_total = final_model_total,
+  model_spread = final_model_spread,
+  reference_matrix = Zs
+  )
+  
+  master$Spread[i] = pred[[2]]
+  master$Total[i] = pred[[1]]
+}
+
+for (i in 1:nrow(master)){
+  if (master$Away[i] == "Hornets") {
+    master$Spread[i] = master$Spread[i]+15
+  }
+  if (master$Home[i] == "Hornets") {
+    master$Spread[i] = master$Spread[i]-15
+  }
+}
+
+write.csv(master, "NBApreds.csv", row.names = FALSE)
+```
+
