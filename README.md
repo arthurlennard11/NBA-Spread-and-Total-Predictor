@@ -41,11 +41,11 @@ Accurate prediction of spreads and totals is achievable using cumulative perform
 
 <img src="Model%20Success/Raptors%20vs%20Magic%20Prediction.png" width="30%">
 
-- Prediction
+- Prediction for another game 
 &nbsp;
 
 <img src="Model%20Success/Raptors%20vs%20Magic%20Score.png" width="30%">
 
-- Actual Score 
+- Actual Score (206 combined)
 ---
 
