@@ -34,7 +34,7 @@ Accurate prediction of spreads and totals is achievable using cumulative perform
 
 &nbsp;
 
-<img src="Model%20Success/Bet%20Slip.png" width="50%"> 
+<img src="Model%20Success/Bet%20Slip.jpg" width="50%"> 
 
 &nbsp;
 
