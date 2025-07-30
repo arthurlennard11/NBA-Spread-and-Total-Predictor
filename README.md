@@ -1,3 +1,39 @@
-## NBA-Spread-and-Total-Predictor
+## 🏀 NBA Spread & Total Prediction (2024–25 Season)
 
-### The goal of this project was very simple: To create a predictive model that could predict spreads (winning margin) and totals (combined score of the two teams) for a list of ~150 NBA games during the 2024/25 season. This project saw me experiment with numerous techniques, including XGBoost, lasso, and linear models. I also created a couple new variables to go into those models, one of which was AvgTSMins. This is the average true shooting percentage for each player on a team but every player's value is weighted by how many minutes they played the game before. Similar to the Premier League predictive model I made, this one also utilized many cumulative means of the various input variables to aid in the predictions. Additionally, this model only used past data during testing to replicate real conditions when testing for predictive strength. Ultimately, the models performed decently well and I was able to profit ~$50 from following the advice of it for betting on both spreads and totals. 
+---
+
+### 🎯 Goal  
+To build a predictive model capable of forecasting **spreads** (winning margin) and **totals** (combined score) for ~150 NBA games during the 2024–25 season.
+
+---
+
+### 💡 Hypothesis  
+Accurate prediction of spreads and totals is achievable using cumulative performance metrics and models trained exclusively on **past data**, simulating real-world betting scenarios.
+
+---
+
+### 📊 Data  
+- NBA game results and team/player statistics from the 2024–25 season  
+- Player-level performance (including shooting percentages and minutes played)  
+- Historical data formatted to only include information available prior to each game  
+
+---
+
+### ⚙️ Methods  
+- Models tested: `XGBoost`, `Lasso Regression`, and `Linear Models`
+- Created new input features such as:
+  - `AvgTSMins`: Team’s **average true shooting percentage**, weighted by each player’s **minutes played** in the previous game  
+- Used **cumulative means** for variables like shooting %, rebounds, etc. to reflect rolling form 
+
+---
+
+### 💸 Outcome  
+- All models performed **reasonably well**, with decent predictive strength  
+- Personal betting trials based on predictions yielded a profit of **over $50** on spreads and totals
+- The custom AvgTSMins variable was the strongest predictor of any one input vairable
+
+---
+
+### 🖼️ Visuals  
+<img src="Visuals/NBA%20Spread%20Performance.png" width="50%">  
+<img src="Visuals/AvgTSMins%20Explanation.png" width="50%">
