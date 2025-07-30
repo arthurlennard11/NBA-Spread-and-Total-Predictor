@@ -29,12 +29,12 @@ Accurate prediction of spreads and totals is achievable using cumulative perform
 
 ### 💸 Outcome  
 - All models performed **reasonably well**, with decent predictive strength  
-- Personal betting trials based on predictions yielded a profit of **over $50** on spreads and totals
+- A friend's betting trials based on my predictions yielded a profit of **over $50** on spreads and totals
 - The custom AvgTSMins variable was the strongest predictor of any one input vairable
 
 &nbsp;
 
-<img src="Model%20Success/Bet%20Slip.jpg" width="50%"> 
+<img src="Model%20Success/Bet%20Slip.jpg" width="30%"> 
 
 &nbsp;
 
