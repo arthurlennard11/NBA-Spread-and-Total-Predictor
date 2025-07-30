@@ -32,8 +32,16 @@ Accurate prediction of spreads and totals is achievable using cumulative perform
 - Personal betting trials based on predictions yielded a profit of **over $50** on spreads and totals
 - The custom AvgTSMins variable was the strongest predictor of any one input vairable
 
+&nbsp;
+
+<img src="Model%20Success/Bet%20Slip.png" width="50%"> 
+
+&nbsp;
+
+<img src="Model%20Success/Raptors%20vs%20Magic%20Prediction.png" width="30%">
+
+&nbsp;
+
+<img src="Model%20Success/Raptors%20vs%20Magic%20Score.png" width="30%">
 ---
 
-### 🖼️ Visuals  
-<img src="Visuals/NBA%20Spread%20Performance.png" width="50%">  
-<img src="Visuals/AvgTSMins%20Explanation.png" width="50%">
