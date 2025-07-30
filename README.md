@@ -36,12 +36,16 @@ Accurate prediction of spreads and totals is achievable using cumulative perform
 
 <img src="Model%20Success/Bet%20Slip.jpg" width="30%"> 
 
+- A couple successes
 &nbsp;
 
 <img src="Model%20Success/Raptors%20vs%20Magic%20Prediction.png" width="30%">
 
+- Prediction
 &nbsp;
 
 <img src="Model%20Success/Raptors%20vs%20Magic%20Score.png" width="30%">
+
+- Actual Score 
 ---
 
